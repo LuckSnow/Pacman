@@ -84,7 +84,6 @@ function loadImages() {
     pinkGhostImage.src = "./pinkGhost.png";
     redGhostImage = new Image()
     redGhostImage.src = "./redGhost.png";
-
     pacmanUpImage = new Image();
     pacmanUpImage.src = "./pacmanUp.png";
     pacmanDownImage = new Image();
