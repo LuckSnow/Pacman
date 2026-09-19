@@ -1099,8 +1099,8 @@ function move() {
             continue;
         }
 
-        // Check ghost collision with Pac-Man
-        if (collision(ghost, pacman)) {
+        // Check ghost collision with Pac-Man (only when physically touching in the same tile)
+        if (isGhostCollidingWithPacman(ghost, pacman)) {
             if (ghost.isScared) {
                 // Eat ghost: progressive point multiplier (200, 400, 800, 1600)
                 ghostStreak++;
@@ -1406,6 +1406,18 @@ function collision(a, b) {
         a.x + a.width > b.x &&
         a.y < b.y + b.height &&
         a.y + a.height > b.y;
+}
+
+// Accurate ghost hitbox: only collide when bodies physically touch in the same tile (eliminates 9-tile / diagonal bug)
+function isGhostCollidingWithPacman(ghost, pacman) {
+    const pCenterX = pacman.x + pacman.width / 2;
+    const pCenterY = pacman.y + pacman.height / 2;
+    const gCenterX = ghost.x + ghost.width / 2;
+    const gCenterY = ghost.y + ghost.height / 2;
+
+    const dist = Math.hypot(pCenterX - gCenterX, pCenterY - gCenterY);
+    // With tileSize = 32, centers must be within 16px (sharing the same tile and visibly touching)
+    return dist < tileSize * 0.52; // ~16.6px
 }
 
 function resetPositions() {
