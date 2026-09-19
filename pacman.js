@@ -29,9 +29,32 @@ let pacmanRightImage;
 let pacmanAnimImage;
 let wallImage;
 
+// Game state variables
 let gameStarted = false;
+let isIntroPlaying = false;
+let isPaused = false;
+let isMuted = false;
+let gameOver = false;
+let gameWon = false;
+let winReason = "";
 let deathAnimation = false;
 let deathTick = 0;
+
+// Scared ghost music & multiplier
+let isScaredMusicPlaying = false;
+let ghostStreak = 0;
+
+// Cherry bonus & win condition tracking
+let cherriesEaten = 0;
+const cherryFruit = {
+    x: 9 * tileSize,
+    y: 11 * tileSize + mazeOffsetY,
+    width: tileSize,
+    height: tileSize,
+    active: false,
+    timer: 0
+};
+let floatingTexts = [];
 
 // X = wall, O = tunnel/skip, P = pac man, ' ' = food
 // Ghosts: b = blue, o = orange, p = pink, r = red
@@ -43,11 +66,11 @@ const tileMap = [
     "X XX X XXXXX X XX X",
     "X    X       X    X",
     "XXXX XXXX XXXX XXXX",
-    "X    X       X    X",
+    "OOOX X       X XOOO",
     "XXXX X XXrXX X XXXX",
-    "X      XbpoX      X",
+    "O      XbpoX      O",
     "XXXX X XXXXX X XXXX",
-    "X    X       X    X",
+    "OOOX X       X XOOO",
     "XXXX X XXXXX X XXXX",
     "X        X        X",
     "X XX XXX X XXX XX X",
@@ -58,7 +81,6 @@ const tileMap = [
     "X                 X",
     "XXXXXXXXXXXXXXXXXXX"
 ];
-
 const walls = new Set();
 const foods = new Set();
 const ghosts = new Set();
@@ -69,7 +91,6 @@ let score = 0;
 // Dynamic high score: loads from localStorage, starts at 0 for fresh player
 let highScore = parseInt(localStorage.getItem("pacman_high_score")) || 0;
 let lives = 3;
-let gameOver = false;
 let ThemeSong;
 let eatFoodAudio;
 let ghostMoveAudio;
@@ -78,12 +99,14 @@ let pacmanDeathAudio;
 let pacmanAnimTick = 0;
 let mazeCanvas = null;
 
-// Audio management functions
+// ==========================================
+// 1. AUDIO MANAGEMENT
+// ==========================================
 function startGhostMovementAudio() {
-    if (!gameStarted || gameOver || deathAnimation) return;
+    if (isMuted || !gameStarted || isPaused || gameOver || deathAnimation || gameWon || isScaredMusicPlaying) return;
     if (ghostMoveAudio) {
         ghostMoveAudio.volume = 0.5;
-        ghostMoveAudio.play().catch(() => {});
+        ghostMoveAudio.play().catch(() => { });
     }
     retroAudio.startGhostSiren();
 }
@@ -96,18 +119,100 @@ function stopGhostMovementAudio() {
     retroAudio.stopGhostSiren();
 }
 
+function startScaredAudio() {
+    stopGhostMovementAudio();
+    if (!isMuted) {
+        retroAudio.startEnergizerMusic();
+    }
+}
+
+function stopScaredAudio() {
+    retroAudio.stopEnergizerMusic();
+    if (gameStarted && !isPaused && !gameOver && !deathAnimation && !gameWon) {
+        startGhostMovementAudio();
+    }
+}
+
 function playDeathAudio() {
     stopGhostMovementAudio();
-    if (pacmanDeathAudio) {
+    stopScaredAudio();
+    isScaredMusicPlaying = false;
+    if (!isMuted && pacmanDeathAudio) {
         pacmanDeathAudio.currentTime = 0;
         pacmanDeathAudio.volume = 0.85;
-        pacmanDeathAudio.play().catch(() => {});
+        pacmanDeathAudio.play().catch(() => { });
     }
-    retroAudio.playDeath();
+    if (!isMuted) {
+        retroAudio.playDeath();
+    }
+}
+
+// Toggle Pause / Resume
+function togglePause() {
+    if (gameOver || gameWon) return;
+    isPaused = !isPaused;
+
+    const pauseBtn = document.getElementById("pauseBtn");
+    if (pauseBtn) {
+        if (isPaused) {
+            pauseBtn.textContent = "▶️ RESUME";
+            pauseBtn.classList.add("active");
+        } else {
+            pauseBtn.textContent = "⏸️ PAUSE";
+            pauseBtn.classList.remove("active");
+        }
+    }
+
+    if (isPaused) {
+        if (ThemeSong && !ThemeSong.paused) {
+            ThemeSong.pause();
+        }
+        stopGhostMovementAudio();
+        retroAudio.stopEnergizerMusic();
+    } else {
+        if (isIntroPlaying && ThemeSong && ThemeSong.paused) {
+            ThemeSong.play().catch(() => { });
+        } else if (isScaredMusicPlaying) {
+            startScaredAudio();
+        } else if (gameStarted) {
+            startGhostMovementAudio();
+        }
+    }
+}
+
+// Toggle Mute / Unmute Sound
+function toggleMute() {
+    isMuted = !isMuted;
+    const muteBtn = document.getElementById("muteBtn");
+    if (muteBtn) {
+        if (isMuted) {
+            muteBtn.textContent = "🔇 SOUND: OFF";
+            muteBtn.classList.add("active");
+        } else {
+            muteBtn.textContent = "🔊 SOUND: ON";
+            muteBtn.classList.remove("active");
+        }
+    }
+
+    if (ThemeSong) ThemeSong.muted = isMuted;
+    if (eatFoodAudio) eatFoodAudio.muted = isMuted;
+    if (ghostMoveAudio) ghostMoveAudio.muted = isMuted;
+    if (pacmanDeathAudio) pacmanDeathAudio.muted = isMuted;
+
+    if (isMuted) {
+        retroAudio.stopGhostSiren();
+        retroAudio.stopEnergizerMusic();
+    } else {
+        if (isScaredMusicPlaying) {
+            retroAudio.startEnergizerMusic();
+        } else if (gameStarted && !isPaused && !gameOver && !deathAnimation && !gameWon) {
+            startGhostMovementAudio();
+        }
+    }
 }
 
 // ==========================================
-// 1. RETRO AUDIO SYNTHESIZER (Web Audio API)
+// 2. RETRO AUDIO SYNTHESIZER (Web Audio API)
 // ==========================================
 class RetroAudio {
     constructor() {
@@ -116,6 +221,12 @@ class RetroAudio {
         this.sirenGain = null;
         this.sirenInterval = null;
         this.isSirenPlaying = false;
+
+        this.energizerOsc = null;
+        this.energizerGain = null;
+        this.energizerInterval = null;
+        this.isEnergizerPlaying = false;
+
         this.chompTone = 0;
     }
 
@@ -132,7 +243,7 @@ class RetroAudio {
     }
 
     startGhostSiren() {
-        if (!this.ctx || this.isSirenPlaying) return;
+        if (isMuted || !this.ctx || this.isSirenPlaying) return;
         try {
             this.isSirenPlaying = true;
             this.sirenOsc = this.ctx.createOscillator();
@@ -168,8 +279,47 @@ class RetroAudio {
         }
     }
 
+    startEnergizerMusic() {
+        if (isMuted || !this.ctx || this.isEnergizerPlaying) return;
+        try {
+            this.stopGhostSiren();
+            this.isEnergizerPlaying = true;
+            this.energizerOsc = this.ctx.createOscillator();
+            this.energizerGain = this.ctx.createGain();
+            this.energizerOsc.type = 'sawtooth';
+            this.energizerGain.gain.setValueAtTime(0.07, this.ctx.currentTime);
+            this.energizerOsc.connect(this.energizerGain);
+            this.energizerGain.connect(this.ctx.destination);
+            this.energizerOsc.start();
+
+            // Distinct pulsating dual-pulse arcade energizer loop
+            let step = 0;
+            const riff = [240, 340, 440, 340];
+            this.energizerInterval = setInterval(() => {
+                if (!this.ctx || !this.isEnergizerPlaying) return;
+                step = (step + 1) % riff.length;
+                this.energizerOsc.frequency.setValueAtTime(riff[step], this.ctx.currentTime);
+            }, 105);
+        } catch (e) { }
+    }
+
+    stopEnergizerMusic() {
+        this.isEnergizerPlaying = false;
+        if (this.energizerInterval) {
+            clearInterval(this.energizerInterval);
+            this.energizerInterval = null;
+        }
+        if (this.energizerOsc) {
+            try {
+                this.energizerOsc.stop();
+                this.energizerOsc.disconnect();
+            } catch (e) { }
+            this.energizerOsc = null;
+        }
+    }
+
     playChomp() {
-        if (!this.ctx) return;
+        if (isMuted || !this.ctx) return;
         try {
             this.chompTone = 1 - this.chompTone;
             const freq = this.chompTone === 0 ? 320 : 440;
@@ -189,25 +339,43 @@ class RetroAudio {
     }
 
     playEatGhost() {
-        if (!this.ctx) return;
+        if (isMuted || !this.ctx) return;
         try {
             const now = this.ctx.currentTime;
             const osc = this.ctx.createOscillator();
             const gain = this.ctx.createGain();
             osc.type = 'square';
-            osc.frequency.setValueAtTime(280, now);
-            osc.frequency.exponentialRampToValueAtTime(900, now + 0.22);
-            gain.gain.setValueAtTime(0.14, now);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+            osc.frequency.setValueAtTime(260, now);
+            osc.frequency.exponentialRampToValueAtTime(1050, now + 0.28);
+            gain.gain.setValueAtTime(0.16, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
             osc.connect(gain);
             gain.connect(this.ctx.destination);
             osc.start(now);
-            osc.stop(now + 0.22);
+            osc.stop(now + 0.28);
+        } catch (e) { }
+    }
+
+    playGhostRetreat() {
+        if (isMuted || !this.ctx) return;
+        try {
+            const now = this.ctx.currentTime;
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(360, now);
+            osc.frequency.exponentialRampToValueAtTime(1200, now + 0.35);
+            gain.gain.setValueAtTime(0.12, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.35);
         } catch (e) { }
     }
 
     playPowerPellet() {
-        if (!this.ctx) return;
+        if (isMuted || !this.ctx) return;
         try {
             const now = this.ctx.currentTime;
             const osc = this.ctx.createOscillator();
@@ -225,11 +393,11 @@ class RetroAudio {
     }
 
     playDeath() {
-        if (!this.ctx) return;
+        if (isMuted || !this.ctx) return;
         try {
             this.stopGhostSiren();
+            this.stopEnergizerMusic();
             const now = this.ctx.currentTime;
-            // 13 descending warbles + 2 end bloops
             const deathSteps = [
                 { f: 680, d: 0.08 },
                 { f: 620, d: 0.08 },
@@ -245,7 +413,7 @@ class RetroAudio {
                 { f: 200, d: 0.10 },
                 { f: 160, d: 0.12 },
                 { f: 105, d: 0.14 },
-                { f: 60,  d: 0.20 }
+                { f: 60, d: 0.20 }
             ];
             let curTime = now;
             for (let step of deathSteps) {
@@ -268,8 +436,9 @@ class RetroAudio {
 
 const retroAudio = new RetroAudio();
 
-// Helper to check walls
+// Helper to check walls (row 9 tunnel openings are passable)
 function isWall(c, r) {
+    if (r === 9 && (c < 0 || c >= columnCount)) return false;
     if (r < 0 || r >= rowCount || c < 0 || c >= columnCount) return true;
     return tileMap[r][c] === 'X';
 }
@@ -278,7 +447,7 @@ function isWall(c, r) {
 function resizeBoard() {
     if (!board) return;
     const maxW = window.innerWidth - 16;
-    const maxH = window.innerHeight - 16;
+    const maxH = window.innerHeight - 56;
     const scale = Math.min(maxW / boardWidth, maxH / boardHeight, 1);
     board.style.width = Math.floor(boardWidth * scale) + "px";
     board.style.height = Math.floor(boardHeight * scale) + "px";
@@ -286,7 +455,7 @@ function resizeBoard() {
 window.addEventListener("resize", resizeBoard);
 
 // ==========================================
-// 2. INITIALIZATION
+// 3. INITIALIZATION
 // ==========================================
 window.onload = function () {
     board = document.getElementById("board");
@@ -307,23 +476,67 @@ window.onload = function () {
     if (ghostMoveAudio) ghostMoveAudio.volume = 0.5;
     if (pacmanDeathAudio) pacmanDeathAudio.volume = 0.85;
 
-    document.addEventListener("keydown", function () {
-        retroAudio.init();
-        if (ThemeSong && ThemeSong.paused && !gameStarted) {
-            ThemeSong.play().catch(() => { });
+    // Hook buttons
+    const pauseBtn = document.getElementById("pauseBtn");
+    if (pauseBtn) {
+        pauseBtn.addEventListener("click", function (e) {
+            e.stopPropagation();
+            togglePause();
+        });
+    }
+
+    const muteBtn = document.getElementById("muteBtn");
+    if (muteBtn) {
+        muteBtn.addEventListener("click", function (e) {
+            e.stopPropagation();
+            toggleMute();
+        });
+    }
+
+    // Board click can start intro or unpause
+    board.addEventListener("click", function () {
+        if (isPaused) {
+            togglePause();
+        } else if (!gameStarted && !isIntroPlaying) {
+            startIntroGame();
         }
-    }, { once: true });
+    });
 
     if (ThemeSong) {
-        ThemeSong.addEventListener("ended", function () {
-            gameStarted = true;
-            startGhostMovementAudio();
-        });
+        ThemeSong.addEventListener("ended", onIntroMusicEnded);
     }
 
     update();
     document.addEventListener("keydown", movePacman);
 };
+
+function startIntroGame() {
+    if (gameStarted || isIntroPlaying) return;
+    retroAudio.init();
+    isIntroPlaying = true;
+
+    if (ThemeSong) {
+        ThemeSong.currentTime = 0;
+        ThemeSong.muted = isMuted;
+        const playPromise = ThemeSong.play();
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                // Intro music successfully started; movement unlocked only on 'ended'
+            }).catch(() => {
+                // Autoplay blocked: start game directly after 2s fallback
+                setTimeout(onIntroMusicEnded, 2000);
+            });
+        }
+    } else {
+        setTimeout(onIntroMusicEnded, 2000);
+    }
+}
+
+function onIntroMusicEnded() {
+    isIntroPlaying = false;
+    gameStarted = true;
+    startGhostMovementAudio();
+}
 
 function loadImages() {
     wallImage = new Image();
@@ -411,7 +624,7 @@ function loadMap() {
     renderMazeCanvas();
 }
 
-// Pre-render retro arcade double-blue walls matching Image 2
+// Pre-render retro arcade double-blue walls matching arcade standard
 function renderMazeCanvas() {
     mazeCanvas = document.createElement("canvas");
     mazeCanvas.width = boardWidth;
@@ -482,28 +695,35 @@ function renderMazeCanvas() {
         }
     }
 
-    // Ghost house gate (pink bar matching Image 2)
+    // Ghost house gate (pink bar)
     mctx.fillStyle = "#ffb8de";
     mctx.fillRect(8 * tileSize + 8, 8 * tileSize + mazeOffsetY + tileSize - 4, tileSize * 3 - 16, 4);
 }
 
 // ==========================================
-// 3. MAIN GAME LOOP
+// 4. MAIN GAME LOOP
 // ==========================================
 function update() {
-    if (gameOver) {
+    if (gameOver || gameWon) {
         draw();
         return;
     }
     requestAnimationFrame(update);
 
+    // If paused, render paused frame and skip movement logic
+    if (isPaused) {
+        draw();
+        return;
+    }
+
+    // Pac-man death animation sequence
     if (deathAnimation) {
         deathTick++;
-        if (deathTick > 90) { // Allow death sound (~1.5s) to finish completely
+        if (deathTick > 90) {
             deathAnimation = false;
             deathTick = 0;
             resetPositions();
-            if (!gameOver) {
+            if (!gameOver && !gameWon) {
                 startGhostMovementAudio();
             }
         }
@@ -511,6 +731,7 @@ function update() {
         return;
     }
 
+    // Mobs and Pacman only move once start music finishes (gameStarted = true)
     if (gameStarted) {
         move();
     }
@@ -518,7 +739,7 @@ function update() {
 }
 
 // ==========================================
-// 4. RENDERING & UI (Matching Image 2)
+// 5. RENDERING & UI
 // ==========================================
 function draw() {
     context.clearRect(0, 0, board.width, board.height);
@@ -548,15 +769,57 @@ function draw() {
         }
     }
 
-    // 3. Draw Pac-Man with Animations
+    // 3. Draw Active Cherry Fruit in Center below Ghost Pen
+    if (cherryFruit.active) {
+        if (cherryImage && cherryImage.complete) {
+            context.save();
+            const pulse = 1 + Math.sin(now * 0.008) * 0.12;
+            const cx = cherryFruit.x + cherryFruit.width / 2;
+            const cy = cherryFruit.y + cherryFruit.height / 2;
+            context.translate(cx, cy);
+            context.scale(pulse, pulse);
+
+            // Glow circle behind cherry
+            context.fillStyle = "rgba(255, 0, 85, 0.25)";
+            context.beginPath();
+            context.arc(0, 0, 16, 0, Math.PI * 2);
+            context.fill();
+
+            context.drawImage(cherryImage, -14, -14, 28, 28);
+            context.restore();
+        }
+    }
+
+    // 4. Draw Pac-Man with Animations
     drawPacman();
 
-    // 4. Draw Ghosts
+    // 5. Draw Ghosts (including spirit pull-back animation)
     for (let ghost of ghosts.values()) {
         ghost.draw(context);
     }
 
-    // 5. Retro Header (1UP & HIGH SCORE) - Matching Image 2
+    // 6. Floating Score Texts (+100, +200, +400, +800, +1600)
+    for (let i = floatingTexts.length - 1; i >= 0; i--) {
+        const ft = floatingTexts[i];
+        context.save();
+        context.globalAlpha = ft.alpha;
+        context.fillStyle = ft.color || "#00ffff";
+        context.font = '11px "Press Start 2P", monospace';
+        context.textAlign = "center";
+        context.shadowColor = ft.color || "#00ffff";
+        context.shadowBlur = 8;
+        context.fillText(ft.text, ft.x, ft.y);
+        context.restore();
+
+        ft.y -= 0.65;
+        ft.life--;
+        ft.alpha = ft.life / 60;
+        if (ft.life <= 0) {
+            floatingTexts.splice(i, 1);
+        }
+    }
+
+    // 7. Retro Header (1UP & HIGH SCORE)
     context.font = '14px "Press Start 2P", monospace';
     context.fillStyle = "#ffffff";
     context.textAlign = "left";
@@ -567,28 +830,86 @@ function draw() {
     context.fillText("HIGH SCORE", boardWidth / 2, 20);
     context.fillText(String(Math.max(highScore, score)), boardWidth / 2, 38);
 
-    // 6. Bottom Footer (Lives & Cherry Fruit) - Matching Image 2
+    // 8. Bottom Footer (Lives & Cherry Fruits Status)
     drawLivesAndFruit();
 
-    // 7. Overlays: "READY!" or "GAME OVER"
+    // 9. Overlays: "READY!", "PAUSED", "GAME OVER", "YOU WIN!"
     context.textAlign = "center";
-    if (!gameStarted && !gameOver) {
+    if (!gameStarted && !gameOver && !gameWon) {
         context.fillStyle = "#ffff00";
         context.font = '16px "Press Start 2P", monospace';
         context.fillText("READY!", boardWidth / 2, 11 * tileSize + mazeOffsetY + 16);
     }
 
+    // PAUSED OVERLAY
+    if (isPaused) {
+        context.save();
+        context.fillStyle = "rgba(0, 0, 0, 0.72)";
+        context.fillRect(0, 0, boardWidth, boardHeight);
+
+        context.font = '28px "Press Start 2P", monospace';
+        context.fillStyle = "#ffff00";
+        context.shadowColor = "#ff0055";
+        context.shadowBlur = 18;
+        context.fillText("PAUSED", boardWidth / 2, boardHeight / 2 - 12);
+
+        context.shadowBlur = 0;
+        context.font = '10px "Press Start 2P", monospace';
+        context.fillStyle = "#00ffff";
+        context.fillText("CLICK OR PRESS 'P' TO RESUME", boardWidth / 2, boardHeight / 2 + 28);
+        context.restore();
+    }
+
+    // GAME OVER OVERLAY
     if (gameOver) {
+        context.save();
+        context.fillStyle = "rgba(0, 0, 0, 0.75)";
+        context.fillRect(0, 0, boardWidth, boardHeight);
+
         context.fillStyle = "#ff0000";
-        context.font = '16px "Press Start 2P", monospace';
-        context.fillText("GAME OVER", boardWidth / 2, 11 * tileSize + mazeOffsetY + 16);
+        context.font = '20px "Press Start 2P", monospace';
+        context.shadowColor = "#ff0000";
+        context.shadowBlur = 15;
+        context.fillText("GAME OVER", boardWidth / 2, boardHeight / 2 - 20);
+
+        context.shadowBlur = 0;
         context.fillStyle = "#ffffff";
         context.font = '10px "Press Start 2P", monospace';
-        context.fillText("PRESS ANY KEY TO RESTART", boardWidth / 2, 13 * tileSize + mazeOffsetY + 16);
+        context.fillText("SCORE: " + score, boardWidth / 2, boardHeight / 2 + 15);
+        context.fillStyle = "#ffff00";
+        context.fillText("PRESS ANY KEY TO RESTART", boardWidth / 2, boardHeight / 2 + 45);
+        context.restore();
+    }
+
+    // VICTORY OVERLAY
+    if (gameWon) {
+        context.save();
+        context.fillStyle = "rgba(0, 0, 0, 0.82)";
+        context.fillRect(0, 0, boardWidth, boardHeight);
+
+        context.fillStyle = "#00ff66";
+        context.font = '24px "Press Start 2P", monospace';
+        context.shadowColor = "#00ff66";
+        context.shadowBlur = 20;
+        context.fillText("YOU WIN!", boardWidth / 2, boardHeight / 2 - 35);
+
+        context.shadowBlur = 0;
+        context.fillStyle = "#ff0055";
+        context.font = '11px "Press Start 2P", monospace';
+        context.fillText(winReason, boardWidth / 2, boardHeight / 2);
+
+        context.fillStyle = "#ffffff";
+        context.font = '12px "Press Start 2P", monospace';
+        context.fillText("FINAL SCORE: " + score, boardWidth / 2, boardHeight / 2 + 35);
+
+        context.fillStyle = "#ffff00";
+        context.font = '10px "Press Start 2P", monospace';
+        context.fillText("PRESS ANY KEY TO PLAY AGAIN", boardWidth / 2, boardHeight / 2 + 70);
+        context.restore();
     }
 }
 
-// Draw Pacman using animations.gif (7 frames, 20x20) rotated in direction
+// Draw Pacman using animations.gif rotated in direction
 function drawPacman() {
     if (!pacman) return;
 
@@ -609,8 +930,7 @@ function drawPacman() {
     const cy = pacman.y + pacman.height / 2;
     context.translate(cx, cy);
 
-    // Default sprite in animations.gif faces RIGHT (0 deg).
-    // Rotate to match direction:
+    // Sprite in animations.gif faces RIGHT (0 deg)
     let angle = 0;
     if (pacman.direction === 'R') {
         angle = 0;
@@ -624,7 +944,6 @@ function drawPacman() {
     context.rotate(angle);
 
     if (pacmanAnimImage.complete && pacmanAnimImage.naturalWidth >= 140) {
-        // 7 frames cycle
         const frameSequence = [0, 1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1];
         let currentFrame = 0;
         if (pacman.isMoving) {
@@ -645,30 +964,79 @@ function drawPacman() {
     context.restore();
 }
 
-// Draw extra lives icons (mini yellow Pacman) and cherry at bottom
+// Draw ghost returning eyes looking towards return target
+function drawGhostEyes(ctx, x, y, width, height, dx, dy) {
+    const angle = Math.atan2(dy, dx);
+    const pupilOffsetDist = 3;
+    const pupilOffsetX = Math.cos(angle) * pupilOffsetDist;
+    const pupilOffsetY = Math.sin(angle) * pupilOffsetDist;
+
+    const eye1X = x + width * 0.32;
+    const eye1Y = y + height * 0.45;
+    const eye2X = x + width * 0.68;
+    const eye2Y = y + height * 0.45;
+    const eyeRadius = 5;
+    const pupilRadius = 2.4;
+
+    ctx.save();
+    // Ghostly cyan aura circle
+    ctx.fillStyle = "rgba(0, 255, 255, 0.16)";
+    ctx.beginPath();
+    ctx.arc(x + width / 2, y + height / 2, 15, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Sclera (white)
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(eye1X, eye1Y, eyeRadius, 0, Math.PI * 2);
+    ctx.arc(eye2X, eye2Y, eyeRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Pupils (dark blue)
+    ctx.fillStyle = "#1111ee";
+    ctx.beginPath();
+    ctx.arc(eye1X + pupilOffsetX, eye1Y + pupilOffsetY, pupilRadius, 0, Math.PI * 2);
+    ctx.arc(eye2X + pupilOffsetX, eye2Y + pupilOffsetY, pupilRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+// Draw extra lives icons & 3 cherry progress slots at bottom
 function drawLivesAndFruit() {
     const iconY = boardHeight - 20;
 
-    // Remaining extra lives (lives - 1)
+    // Remaining extra lives
     const extraLives = Math.max(0, lives - 1);
     for (let i = 0; i < extraLives; i++) {
         const iconX = 36 + i * 26;
         context.fillStyle = "#ffff00";
         context.beginPath();
-        // Mini Pac-Man facing left matching Image 2
         context.arc(iconX, iconY, 9, 1.25 * Math.PI, 0.75 * Math.PI, false);
         context.lineTo(iconX, iconY);
         context.fill();
     }
 
-    // Cherry icon at bottom right
-    if (cherryImage && cherryImage.complete) {
-        context.drawImage(cherryImage, boardWidth - 54, boardHeight - 32, 24, 24);
+    // 3 Cherry Progress Slots at bottom right
+    const cherryStartX = boardWidth - 100;
+    for (let i = 0; i < 3; i++) {
+        const cx = cherryStartX + i * 28;
+        if (cherryImage && cherryImage.complete) {
+            if (i < cherriesEaten) {
+                // Eaten cherry: fully visible and vibrant
+                context.drawImage(cherryImage, cx, boardHeight - 32, 24, 24);
+            } else {
+                // Slot waiting for cherry: translucent silhouette
+                context.save();
+                context.globalAlpha = 0.22;
+                context.drawImage(cherryImage, cx, boardHeight - 32, 24, 24);
+                context.restore();
+            }
+        }
     }
 }
 
 // ==========================================
-// 5. MOVEMENT, RESPONSIVENESS & CORNERING
+// 6. MOVEMENT, RESPONSIVENESS & WRAP TUNNEL
 // ==========================================
 function move() {
     // 1. Process Pacman input buffer / cornering
@@ -680,21 +1048,40 @@ function move() {
     pacman.x += pacman.velocityX;
     pacman.y += pacman.velocityY;
 
-    // Wrap tunnel check for Pacman
-    if (pacman.x < -tileSize / 2) {
-        pacman.x = boardWidth - tileSize / 2;
-    } else if (pacman.x > boardWidth - tileSize / 2) {
-        pacman.x = -tileSize / 2;
+    // Wrap tunnel on Row 9 (col 0 <-> col 18)
+    const tunnelY = 9 * tileSize + mazeOffsetY;
+    const isAtTunnelRow = Math.abs(pacman.y - tunnelY) < tileSize / 2;
+
+    if (isAtTunnelRow) {
+        // Entering left hole moving left -> appear at right hole and continue moving left into map
+        if (pacman.x <= -tileSize) {
+            pacman.x = boardWidth;
+            pacman.y = tunnelY;
+            pacman.direction = 'L';
+            pacman.updateVelocity();
+            updatePacmanImage();
+        }
+        // Entering right hole moving right -> appear at left hole and continue moving right into map
+        else if (pacman.x >= boardWidth) {
+            pacman.x = -tileSize;
+            pacman.y = tunnelY;
+            pacman.direction = 'R';
+            pacman.updateVelocity();
+            updatePacmanImage();
+        }
     }
 
-    // Check wall collision for Pacman
+    // Check wall collision for Pacman (bypass check if Pacman is passing outside tunnel borders)
     let wallHit = false;
-    for (let wall of walls.values()) {
-        if (collision(pacman, wall)) {
-            pacman.x -= pacman.velocityX;
-            pacman.y -= pacman.velocityY;
-            wallHit = true;
-            break;
+    const inTunnelPassage = isAtTunnelRow && (pacman.x < 0 || pacman.x + pacman.width > boardWidth);
+    if (!inTunnelPassage) {
+        for (let wall of walls.values()) {
+            if (collision(pacman, wall)) {
+                pacman.x -= pacman.velocityX;
+                pacman.y -= pacman.velocityY;
+                wallHit = true;
+                break;
+            }
         }
     }
 
@@ -707,14 +1094,35 @@ function move() {
     for (let ghost of ghosts.values()) {
         ghost.update();
 
+        // If ghost is returning, it cannot hurt Pac-Man and cannot be eaten again
+        if (ghost.isReturning) {
+            continue;
+        }
+
         // Check ghost collision with Pac-Man
         if (collision(ghost, pacman)) {
             if (ghost.isScared) {
-                // Eat ghost
-                score += 200;
+                // Eat ghost: progressive point multiplier (200, 400, 800, 1600)
+                ghostStreak++;
+                const pointValues = [200, 400, 800, 1600];
+                const pointsEarned = pointValues[Math.min(ghostStreak - 1, 3)] || 1600;
+                score += pointsEarned;
                 updateHighScore();
                 retroAudio.playEatGhost();
-                ghost.reset();
+                retroAudio.playGhostRetreat();
+
+                // Floating score popup (+200, +400, +800, +1600)
+                floatingTexts.push({
+                    text: "+" + pointsEarned,
+                    x: ghost.x + tileSize / 2,
+                    y: ghost.y,
+                    alpha: 1.0,
+                    life: 60,
+                    color: "#ffff00"
+                });
+
+                // Ghost starts animated pull back to spawn pen
+                ghost.eat();
             } else {
                 // Pac-Man death
                 lives -= 1;
@@ -731,6 +1139,13 @@ function move() {
         }
     }
 
+    // Check if any ghosts are still scared. If all returned to normal, revert energizer music!
+    const anyScared = Array.from(ghosts.values()).some(g => g.isScared && !g.isReturning);
+    if (isScaredMusicPlaying && !anyScared) {
+        isScaredMusicPlaying = false;
+        stopScaredAudio();
+    }
+
     // 4. Food & Pellet Collision
     let foodEaten = null;
     for (let food of foods.values()) {
@@ -739,14 +1154,28 @@ function move() {
             if (food.isPowerPellet) {
                 score += 50;
                 retroAudio.playPowerPellet();
-                // Scare ghosts
+
+                // Reset ghost streak for 200, 400, 800, 1600 bonus chaining
+                ghostStreak = 0;
+
+                // Start Scared / Energizer music!
+                isScaredMusicPlaying = true;
+                startScaredAudio();
+
+                // Spawn Cherry Fruit in Center below Ghost Pen
+                cherryFruit.active = true;
+                cherryFruit.x = 9 * tileSize;
+                cherryFruit.y = 11 * tileSize + mazeOffsetY;
+                cherryFruit.timer = 900; // ~15s active
+
+                // Scare all active ghosts
                 for (let g of ghosts.values()) {
                     g.makeScared(360); // ~6 seconds
                 }
             } else {
                 score += 10;
                 retroAudio.playChomp();
-                if (eatFoodAudio && eatFoodAudio.paused) {
+                if (!isMuted && eatFoodAudio && eatFoodAudio.paused) {
                     eatFoodAudio.currentTime = 0;
                     eatFoodAudio.play().catch(() => { });
                 }
@@ -760,11 +1189,50 @@ function move() {
         foods.delete(foodEaten);
     }
 
-    // Next Level
-    if (foods.size === 0) {
-        loadMap();
-        resetPositions();
+    // 5. Cherry Fruit Collision & Timeout
+    if (cherryFruit.active) {
+        cherryFruit.timer--;
+        if (cherryFruit.timer <= 0) {
+            cherryFruit.active = false;
+        } else if (collision(pacman, cherryFruit)) {
+            cherryFruit.active = false;
+            cherriesEaten++;
+            score += 100;
+            updateHighScore();
+            retroAudio.playEatGhost();
+
+            floatingTexts.push({
+                text: "+100",
+                x: cherryFruit.x + tileSize / 2,
+                y: cherryFruit.y,
+                alpha: 1.0,
+                life: 60,
+                color: "#ff0055"
+            });
+
+            // Win condition 1: Ate 3 cherries
+            if (cherriesEaten >= 3) {
+                triggerVictory("3 CHERRIES COLLECTED!");
+                return;
+            }
+        }
     }
+
+    // Win condition 2: All pellets on map cleared
+    if (foods.size === 0) {
+        triggerVictory("ALL PELLETS CLEARED!");
+        return;
+    }
+}
+
+function triggerVictory(reason) {
+    gameWon = true;
+    winReason = reason;
+    stopGhostMovementAudio();
+    stopScaredAudio();
+    isScaredMusicPlaying = false;
+    updateHighScore();
+    retroAudio.playPowerPellet();
 }
 
 function updateHighScore() {
@@ -776,7 +1244,7 @@ function updateHighScore() {
 
 // Responsive Cornering / Pre-turn helper
 function tryTurnPacman(newDir) {
-    const tolerance = 8; // cornering alignment tolerance in pixels
+    const tolerance = 8;
 
     if (newDir === 'U' || newDir === 'D') {
         const targetX = Math.round(pacman.x / tileSize) * tileSize;
@@ -822,31 +1290,69 @@ function collidesWithAnyWall(box) {
     return false;
 }
 
+function restartGame() {
+    loadMap();
+    resetPositions();
+    lives = 3;
+    score = 0;
+    cherriesEaten = 0;
+    cherryFruit.active = false;
+    gameOver = false;
+    gameWon = false;
+    isPaused = false;
+    isIntroPlaying = false;
+    isScaredMusicPlaying = false;
+    ghostStreak = 0;
+    gameStarted = false;
+    stopScaredAudio();
+    startIntroGame();
+    update();
+}
+
 function movePacman(e) {
     retroAudio.init();
+
+    // Pause toggle via key 'P' or 'Space'
+    if (e.code === "KeyP" || (e.code === "Space" && gameStarted && !gameOver && !gameWon)) {
+        e.preventDefault();
+        togglePause();
+        return;
+    }
+
+    // Mute toggle via key 'M'
+    if (e.code === "KeyM") {
+        e.preventDefault();
+        toggleMute();
+        return;
+    }
 
     if (e.code.startsWith("Arrow")) {
         e.preventDefault();
     }
 
-    if (gameOver) {
-        loadMap();
-        resetPositions();
-        lives = 3;
-        score = 0;
-        gameOver = false;
-        gameStarted = true;
-        startGhostMovementAudio();
-        update();
+    if (gameOver || gameWon) {
+        restartGame();
         return;
     }
 
+    if (isPaused) {
+        return;
+    }
+
+    // Before game starts or during intro music: start music on first press & buffer direction
     if (!gameStarted) {
-        gameStarted = true;
-        if (ThemeSong && ThemeSong.paused) {
-            ThemeSong.play().catch(() => { });
+        if (!isIntroPlaying) {
+            startIntroGame();
         }
-        startGhostMovementAudio();
+        let targetDir = null;
+        if (e.code === "ArrowUp" || e.code === "KeyW") targetDir = 'U';
+        else if (e.code === "ArrowDown" || e.code === "KeyS") targetDir = 'D';
+        else if (e.code === "ArrowLeft" || e.code === "KeyA") targetDir = 'L';
+        else if (e.code === "ArrowRight" || e.code === "KeyD") targetDir = 'R';
+        if (targetDir) {
+            pacman.nextDirection = targetDir;
+        }
+        return; // Movement remains locked until intro music completes
     }
 
     let targetDir = null;
@@ -916,7 +1422,7 @@ function resetPositions() {
 }
 
 // ==========================================
-// 6. CORE BLOCK & SMART GHOST CLASSES
+// 7. CORE BLOCK & SMART GHOST CLASSES
 // ==========================================
 class Block {
     constructor(image, x, y, width, height) {
@@ -979,6 +1485,12 @@ class GhostBlock extends Block {
         this.scaredTimer = 0;
         this.inPen = true;
 
+        // Spirit pull-back animation state
+        this.isReturning = false;
+        this.returnTargetX = x;
+        this.returnTargetY = y;
+        this.returnTrail = [];
+
         // Spawn delays for natural wave emergence
         if (ghostType === 'red') this.penTimer = 0;
         else if (ghostType === 'pink') this.penTimer = 60;
@@ -987,8 +1499,18 @@ class GhostBlock extends Block {
     }
 
     makeScared(duration) {
+        if (this.isReturning) return; // Don't scare if already returning to pen
         this.isScared = true;
         this.scaredTimer = duration;
+    }
+
+    eat() {
+        this.isScared = false;
+        this.scaredTimer = 0;
+        this.isReturning = true;
+        this.returnTargetX = this.startX;
+        this.returnTargetY = this.startY;
+        this.returnTrail = [];
     }
 
     updateVelocityWithSpeed(spd) {
@@ -999,6 +1521,31 @@ class GhostBlock extends Block {
     }
 
     update() {
+        // 1. Spirit pull-back animation to spawn point
+        if (this.isReturning) {
+            const dx = this.returnTargetX - this.x;
+            const dy = this.returnTargetY - this.y;
+            const dist = Math.hypot(dx, dy);
+            const pullSpeed = 5.6;
+
+            // Record trail
+            this.returnTrail.unshift({ x: this.x + this.width / 2, y: this.y + this.height / 2 });
+            if (this.returnTrail.length > 8) this.returnTrail.pop();
+
+            if (dist <= pullSpeed) {
+                this.x = this.returnTargetX;
+                this.y = this.returnTargetY;
+                this.isReturning = false;
+                this.inPen = true;
+                this.penTimer = 90; // Stays 1.5s in pen before re-emerging
+                this.returnTrail = [];
+            } else {
+                this.x += (dx / dist) * pullSpeed;
+                this.y += (dy / dist) * pullSpeed;
+            }
+            return;
+        }
+
         if (this.isScared) {
             this.scaredTimer--;
             if (this.scaredTimer <= 0) {
@@ -1041,11 +1588,21 @@ class GhostBlock extends Block {
         this.x += this.velocityX;
         this.y += this.velocityY;
 
-        // Wrap tunnel
-        if (this.x < -tileSize / 2) {
-            this.x = boardWidth - tileSize / 2;
-        } else if (this.x > boardWidth - tileSize / 2) {
-            this.x = -tileSize / 2;
+        // Wrap tunnel on Row 9
+        const tunnelY = 9 * tileSize + mazeOffsetY;
+        const isAtTunnelRow = Math.abs(this.y - tunnelY) < tileSize / 2;
+        if (isAtTunnelRow) {
+            if (this.x <= -this.width) {
+                this.x = boardWidth;
+                this.y = tunnelY;
+                this.direction = 'L';
+                this.updateVelocityWithSpeed(spd);
+            } else if (this.x >= boardWidth) {
+                this.x = -this.width;
+                this.y = tunnelY;
+                this.direction = 'R';
+                this.updateVelocityWithSpeed(spd);
+            }
         }
 
         // Decision point at grid intersections
@@ -1157,6 +1714,37 @@ class GhostBlock extends Block {
     }
 
     draw(ctx) {
+        // Spirit pull-back animation
+        if (this.isReturning) {
+            ctx.save();
+            // Motion streaks / pull trail
+            if (this.returnTrail.length > 1) {
+                ctx.beginPath();
+                ctx.moveTo(this.returnTrail[0].x, this.returnTrail[0].y);
+                for (let i = 1; i < this.returnTrail.length; i++) {
+                    ctx.lineTo(this.returnTrail[i].x, this.returnTrail[i].y);
+                }
+                ctx.strokeStyle = "rgba(0, 255, 255, 0.45)";
+                ctx.lineWidth = 3;
+                ctx.lineCap = "round";
+                ctx.stroke();
+
+                // Dashed guide beam straight to spawn
+                ctx.beginPath();
+                ctx.moveTo(this.x + this.width / 2, this.y + this.height / 2);
+                ctx.lineTo(this.returnTargetX + this.width / 2, this.returnTargetY + this.height / 2);
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 4]);
+                ctx.stroke();
+            }
+
+            // Draw eyes looking towards target
+            drawGhostEyes(ctx, this.x, this.y, this.width, this.height, this.returnTargetX - this.x, this.returnTargetY - this.y);
+            ctx.restore();
+            return;
+        }
+
         let img = this.isScared ? scaredGhostImage : this.baseImage;
         if (img && img.complete) {
             ctx.drawImage(img, this.x, this.y, this.width, this.height);
@@ -1169,6 +1757,8 @@ class GhostBlock extends Block {
         super.reset();
         this.isScared = false;
         this.scaredTimer = 0;
+        this.isReturning = false;
+        this.returnTrail = [];
         this.inPen = true;
         if (this.ghostType === 'red') this.penTimer = 0;
         else if (this.ghostType === 'pink') this.penTimer = 60;
