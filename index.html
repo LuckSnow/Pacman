@@ -3,11 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Game Pacman</title>
+    <title>Pac-Man Arcade</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="./pacman.css">
     <script src="./pacman.js"></script>
 </head>
 <body>
-    <canvas id="board"></canvas>
+    <div class="arcade-cabinet">
+        <canvas id="board"></canvas>
+    </div>
+    <audio src="./Sfx/StartGame.mp3" id="gameAudio" preload="auto"></audio>
+    <audio src="./Sfx/Eat2.mp3" id="eatFoodAudio" preload="auto"></audio>
 </body>
 </html>

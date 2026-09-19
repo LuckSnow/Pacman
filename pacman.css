@@ -1,7 +1,49 @@
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
 body {
-    text-align: center;
+    background: radial-gradient(circle at center, #181824 0%, #08080c 100%);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     overflow: hidden;
+    font-family: 'Press Start 2P', monospace, sans-serif;
+    color: #fff;
+    user-select: none;
+    padding: 6px;
 }
+
+.arcade-cabinet {
+    position: relative;
+    padding: 6px;
+    background: #000;
+    border-radius: 10px;
+    box-shadow: 0 0 35px rgba(33, 33, 255, 0.35), 0 0 80px rgba(0, 0, 0, 0.9), inset 0 0 12px rgba(255, 255, 255, 0.05);
+    border: 2px solid #1a1a40;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    max-height: 98vh;
+    max-width: 98vw;
+}
+
 #board {
-    background-color: black;
+    background-color: #000;
+    display: block;
+    image-rendering: pixelated;
+    border-radius: 4px;
+    /* Auto scale so bottom is never cut off */
+    max-height: calc(98vh - 16px);
+    max-width: calc(98vw - 16px);
+    width: auto;
+    height: auto;
+    aspect-ratio: 608 / 756;
 }
+
+
