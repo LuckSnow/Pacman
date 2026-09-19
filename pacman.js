@@ -43,11 +43,11 @@ const tileMap = [
     "X XX X XXXXX X XX X",
     "X    X       X    X",
     "XXXX XXXX XXXX XXXX",
-    "OOOX X       X XOOO",
+    "X    X       X    X",
     "XXXX X XXrXX X XXXX",
-    "X       bpo       X",
+    "X      XbpoX      X",
     "XXXX X XXXXX X XXXX",
-    "OOOX X       X XOOO",
+    "X    X       X    X",
     "XXXX X XXXXX X XXXX",
     "X        X        X",
     "X XX XXX X XXX XX X",
@@ -56,7 +56,7 @@ const tileMap = [
     "X    X   X   X    X",
     "X XXXXXX X XXXXXX X",
     "X                 X",
-    "XXXXXXXXXXXXXXXXXXX" 
+    "XXXXXXXXXXXXXXXXXXX"
 ];
 
 const walls = new Set();
@@ -72,9 +72,39 @@ let lives = 3;
 let gameOver = false;
 let ThemeSong;
 let eatFoodAudio;
+let ghostMoveAudio;
+let pacmanDeathAudio;
 
 let pacmanAnimTick = 0;
 let mazeCanvas = null;
+
+// Audio management functions
+function startGhostMovementAudio() {
+    if (!gameStarted || gameOver || deathAnimation) return;
+    if (ghostMoveAudio) {
+        ghostMoveAudio.volume = 0.5;
+        ghostMoveAudio.play().catch(() => {});
+    }
+    retroAudio.startGhostSiren();
+}
+
+function stopGhostMovementAudio() {
+    if (ghostMoveAudio) {
+        ghostMoveAudio.pause();
+        ghostMoveAudio.currentTime = 0;
+    }
+    retroAudio.stopGhostSiren();
+}
+
+function playDeathAudio() {
+    stopGhostMovementAudio();
+    if (pacmanDeathAudio) {
+        pacmanDeathAudio.currentTime = 0;
+        pacmanDeathAudio.volume = 0.85;
+        pacmanDeathAudio.play().catch(() => {});
+    }
+    retroAudio.playDeath();
+}
 
 // ==========================================
 // 1. RETRO AUDIO SYNTHESIZER (Web Audio API)
@@ -108,19 +138,19 @@ class RetroAudio {
             this.sirenOsc = this.ctx.createOscillator();
             this.sirenGain = this.ctx.createGain();
             this.sirenOsc.type = 'triangle';
-            this.sirenGain.gain.setValueAtTime(0.03, this.ctx.currentTime);
+            this.sirenGain.gain.setValueAtTime(0.06, this.ctx.currentTime);
             this.sirenOsc.connect(this.sirenGain);
             this.sirenGain.connect(this.ctx.destination);
             this.sirenOsc.start();
-            
+
             let step = 0;
             this.sirenInterval = setInterval(() => {
                 if (!this.ctx || !this.isSirenPlaying) return;
                 step++;
-                const freq = 190 + Math.sin(step * 0.35) * 40;
+                const freq = 190 + Math.sin(step * 0.35) * 45;
                 this.sirenOsc.frequency.setValueAtTime(freq, this.ctx.currentTime);
             }, 90);
-        } catch(e) {}
+        } catch (e) { }
     }
 
     stopGhostSiren() {
@@ -133,7 +163,7 @@ class RetroAudio {
             try {
                 this.sirenOsc.stop();
                 this.sirenOsc.disconnect();
-            } catch(e) {}
+            } catch (e) { }
             this.sirenOsc = null;
         }
     }
@@ -155,7 +185,7 @@ class RetroAudio {
             gain.connect(this.ctx.destination);
             osc.start(now);
             osc.stop(now + 0.07);
-        } catch(e) {}
+        } catch (e) { }
     }
 
     playEatGhost() {
@@ -173,7 +203,7 @@ class RetroAudio {
             gain.connect(this.ctx.destination);
             osc.start(now);
             osc.stop(now + 0.22);
-        } catch(e) {}
+        } catch (e) { }
     }
 
     playPowerPellet() {
@@ -191,7 +221,7 @@ class RetroAudio {
             gain.connect(this.ctx.destination);
             osc.start(now);
             osc.stop(now + 0.15);
-        } catch(e) {}
+        } catch (e) { }
     }
 
     playDeath() {
@@ -199,19 +229,40 @@ class RetroAudio {
         try {
             this.stopGhostSiren();
             const now = this.ctx.currentTime;
-            const osc = this.ctx.createOscillator();
-            const gain = this.ctx.createGain();
-            osc.type = 'sawtooth';
-            osc.frequency.setValueAtTime(540, now);
-            osc.frequency.exponentialRampToValueAtTime(65, now + 0.75);
-            gain.gain.setValueAtTime(0.18, now);
-            gain.gain.linearRampToValueAtTime(0.12, now + 0.55);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.75);
-            osc.connect(gain);
-            gain.connect(this.ctx.destination);
-            osc.start(now);
-            osc.stop(now + 0.8);
-        } catch(e) {}
+            // 13 descending warbles + 2 end bloops
+            const deathSteps = [
+                { f: 680, d: 0.08 },
+                { f: 620, d: 0.08 },
+                { f: 570, d: 0.08 },
+                { f: 520, d: 0.08 },
+                { f: 480, d: 0.08 },
+                { f: 440, d: 0.08 },
+                { f: 400, d: 0.08 },
+                { f: 360, d: 0.08 },
+                { f: 320, d: 0.08 },
+                { f: 280, d: 0.08 },
+                { f: 240, d: 0.09 },
+                { f: 200, d: 0.10 },
+                { f: 160, d: 0.12 },
+                { f: 105, d: 0.14 },
+                { f: 60,  d: 0.20 }
+            ];
+            let curTime = now;
+            for (let step of deathSteps) {
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(step.f, curTime);
+                osc.frequency.exponentialRampToValueAtTime(step.f * 0.72, curTime + step.d);
+                gain.gain.setValueAtTime(0.16, curTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, curTime + step.d);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(curTime);
+                osc.stop(curTime + step.d);
+                curTime += step.d;
+            }
+        } catch (e) { }
     }
 }
 
@@ -237,7 +288,7 @@ window.addEventListener("resize", resizeBoard);
 // ==========================================
 // 2. INITIALIZATION
 // ==========================================
-window.onload = function() {
+window.onload = function () {
     board = document.getElementById("board");
     board.height = boardHeight;
     board.width = boardWidth;
@@ -250,18 +301,23 @@ window.onload = function() {
 
     ThemeSong = document.getElementById("gameAudio");
     eatFoodAudio = document.getElementById("eatFoodAudio");
+    ghostMoveAudio = document.getElementById("ghostMoveAudio");
+    pacmanDeathAudio = document.getElementById("pacmanDeathAudio");
 
-    document.addEventListener("keydown", function() {
+    if (ghostMoveAudio) ghostMoveAudio.volume = 0.5;
+    if (pacmanDeathAudio) pacmanDeathAudio.volume = 0.85;
+
+    document.addEventListener("keydown", function () {
         retroAudio.init();
         if (ThemeSong && ThemeSong.paused && !gameStarted) {
-            ThemeSong.play().catch(() => {});
+            ThemeSong.play().catch(() => { });
         }
-    }, {once: true});
+    }, { once: true });
 
     if (ThemeSong) {
-        ThemeSong.addEventListener("ended", function() {
+        ThemeSong.addEventListener("ended", function () {
             gameStarted = true;
-            retroAudio.startGhostSiren();
+            startGhostMovementAudio();
         });
     }
 
@@ -315,7 +371,7 @@ function loadMap() {
 
             if (tileMapChar == 'X') {
                 const wall = new Block(wallImage, x, y, tileSize, tileSize);
-                walls.add(wall);  
+                walls.add(wall);
             }
             else if (tileMapChar == 'b') {
                 const ghost = new GhostBlock(blueGhostImage, x, y, tileSize, tileSize, 'blue');
@@ -443,12 +499,12 @@ function update() {
 
     if (deathAnimation) {
         deathTick++;
-        if (deathTick > 50) {
+        if (deathTick > 90) { // Allow death sound (~1.5s) to finish completely
             deathAnimation = false;
             deathTick = 0;
             resetPositions();
             if (!gameOver) {
-                retroAudio.startGhostSiren();
+                startGhostMovementAudio();
             }
         }
         draw();
@@ -481,13 +537,13 @@ function draw() {
             if (flash) {
                 context.fillStyle = "#ffb8ae";
                 context.beginPath();
-                context.arc(food.x + food.width/2, food.y + food.height/2, 6.5, 0, Math.PI * 2);
+                context.arc(food.x + food.width / 2, food.y + food.height / 2, 6.5, 0, Math.PI * 2);
                 context.fill();
             }
         } else {
             context.fillStyle = "#ffb8ae";
             context.beginPath();
-            context.arc(food.x + food.width/2, food.y + food.height/2, 2.5, 0, Math.PI * 2);
+            context.arc(food.x + food.width / 2, food.y + food.height / 2, 2.5, 0, Math.PI * 2);
             context.fill();
         }
     }
@@ -539,8 +595,10 @@ function drawPacman() {
     if (deathAnimation) {
         context.save();
         context.translate(pacman.x + pacman.width / 2, pacman.y + pacman.height / 2);
-        context.rotate(deathTick * 0.25);
-        context.globalAlpha = Math.max(0, 1 - deathTick / 50);
+        const progress = Math.min(1, deathTick / 80);
+        context.rotate(deathTick * 0.22);
+        const scale = Math.max(0.05, 1 - progress);
+        context.scale(scale, scale);
         context.drawImage(pacmanRightImage, -pacman.width / 2, -pacman.height / 2, pacman.width, pacman.height);
         context.restore();
         return;
@@ -660,7 +718,7 @@ function move() {
             } else {
                 // Pac-Man death
                 lives -= 1;
-                retroAudio.playDeath();
+                playDeathAudio();
                 deathAnimation = true;
                 deathTick = 0;
                 pacman.isMoving = false;
@@ -690,7 +748,7 @@ function move() {
                 retroAudio.playChomp();
                 if (eatFoodAudio && eatFoodAudio.paused) {
                     eatFoodAudio.currentTime = 0;
-                    eatFoodAudio.play().catch(() => {});
+                    eatFoodAudio.play().catch(() => { });
                 }
             }
 
@@ -778,7 +836,7 @@ function movePacman(e) {
         score = 0;
         gameOver = false;
         gameStarted = true;
-        retroAudio.startGhostSiren();
+        startGhostMovementAudio();
         update();
         return;
     }
@@ -786,9 +844,9 @@ function movePacman(e) {
     if (!gameStarted) {
         gameStarted = true;
         if (ThemeSong && ThemeSong.paused) {
-            ThemeSong.play().catch(() => {});
+            ThemeSong.play().catch(() => { });
         }
-        retroAudio.startGhostSiren();
+        startGhostMovementAudio();
     }
 
     let targetDir = null;
@@ -839,9 +897,9 @@ function updatePacmanImage() {
 
 function collision(a, b) {
     return a.x < b.x + b.width &&
-           a.x + a.width > b.x &&
-           a.y < b.y + b.height &&
-           a.y + a.height > b.y;
+        a.x + a.width > b.x &&
+        a.y < b.y + b.height &&
+        a.y + a.height > b.y;
 }
 
 function resetPositions() {
@@ -920,7 +978,7 @@ class GhostBlock extends Block {
         this.isScared = false;
         this.scaredTimer = 0;
         this.inPen = true;
-        
+
         // Spawn delays for natural wave emergence
         if (ghostType === 'red') this.penTimer = 0;
         else if (ghostType === 'pink') this.penTimer = 60;
@@ -955,7 +1013,7 @@ class GhostBlock extends Block {
             this.penTimer--;
             if (this.penTimer <= 0) {
                 const gateX = 9 * tileSize;
-                const gateY = 8 * tileSize + mazeOffsetY;
+                const gateY = 7 * tileSize + mazeOffsetY;
                 if (Math.abs(this.x - gateX) > 2) {
                     this.x += this.x < gateX ? spd : -spd;
                 } else {
@@ -1044,7 +1102,7 @@ class GhostBlock extends Block {
             for (let d of nonReverseDirs) {
                 const nc = col + deltas[d].dc;
                 const nr = row + deltas[d].dr;
-                const dist = (nc - pacCol)*(nc - pacCol) + (nr - pacRow)*(nr - pacRow);
+                const dist = (nc - pacCol) * (nc - pacCol) + (nr - pacRow) * (nr - pacRow);
                 if (dist > maxDist) {
                     maxDist = dist;
                     bestDir = d;
@@ -1089,7 +1147,7 @@ class GhostBlock extends Block {
         for (let d of nonReverseDirs) {
             const nc = col + deltas[d].dc;
             const nr = row + deltas[d].dr;
-            const dist = (nc - targetCol)*(nc - targetCol) + (nr - targetRow)*(nr - targetRow);
+            const dist = (nc - targetCol) * (nc - targetCol) + (nr - targetRow) * (nr - targetRow);
             if (dist < minDist) {
                 minDist = dist;
                 bestDir = d;
@@ -1117,4 +1175,4 @@ class GhostBlock extends Block {
         else if (this.ghostType === 'blue') this.penTimer = 140;
         else if (this.ghostType === 'orange') this.penTimer = 220;
     }
-}
+}

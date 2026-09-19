@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,11 +11,15 @@
     <link rel="stylesheet" href="./pacman.css">
     <script src="./pacman.js"></script>
 </head>
+
 <body>
     <div class="arcade-cabinet">
         <canvas id="board"></canvas>
     </div>
     <audio src="./Sfx/StartGame.mp3" id="gameAudio" preload="auto"></audio>
     <audio src="./Sfx/Eat2.mp3" id="eatFoodAudio" preload="auto"></audio>
+    <audio src="./Sfx/GhostMove.mp3" id="ghostMoveAudio" loop preload="auto"></audio>
+    <audio src="./Sfx/PacmanDeath.mp3" id="pacmanDeathAudio" preload="auto"></audio>
 </body>
+
 </html>
